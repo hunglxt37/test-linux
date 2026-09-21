@@ -1,166 +1,188 @@
 pipeline {
     agent any
 
-    // ── Biến môi trường ──────────────────────────────────────────
-    environment {
-        DOCKERHUB_USERNAME = credentials('DOCKERHUB_USERNAME') // Secret text
-        DOCKERHUB_TOKEN    = credentials('DOCKERHUB_TOKEN')    // Secret text
-        IMAGE_BACKEND      = "${DOCKERHUB_USERNAME}/smartgrocery-backend"
-        IMAGE_FRONTEND     = "${DOCKERHUB_USERNAME}/smartgrocery-frontend"
-
-        // VPS nơi Jenkins đang chạy
-        VPS_USER = 'thanhhung'
-        VPS_HOST = '192.168.139.128'
-        // VPS_SSH_KEY: Jenkins Credential loại "SSH Username with private key"
-        // ID credential: VPS_SSH_KEY
+    // ─────────────────────────────────────────────
+    // Poll SCM: kiểm tra thay đổi trên GitHub mỗi 5 phút
+    // ─────────────────────────────────────────────
+    triggers {
+        pollSCM('H/5 * * * *')
     }
 
-    triggers {
-        githubPush()
+    environment {
+        // ── Thông tin Git repo ──
+        GIT_REPO_URL  = 'https://github.com/hunglxt37/test-linux'
+        GIT_BRANCH    = 'main'
+        GIT_CRED_ID   = 'github-token'
+
+        // ── Thư mục trên VPS nơi chứa source code ──
+        DEPLOY_DIR    = '/opt/smartgrocery'
+
+        // ── Thông tin SSH vào VPS ──
+        // Tạo Credential loại "SSH Username with private key" trong Jenkins với ID = 'vps-ssh-key'
+        SSH_CRED_ID   = 'vps-ssh-key'
+        // Điền IP hoặc domain VPS vào đây (hoặc đặt biến môi trường trong Jenkins)
+        VPS_HOST      = '192.168.139.128'
+        VPS_USER      = 'thanhhung'
+
+        // ── Prefix để tag image (không cần Docker Hub, build & dùng local) ──
+        DOCKERHUB_USERNAME = 'smartgrocery'
+
+        // ── Tên project cho docker compose ──
+        COMPOSE_PROJECT = 'smartgrocery'
     }
 
     options {
-        timestamps()
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
     }
 
     stages {
 
-        // ─────────────────────────────────────────────────────────
-        // STAGE 1: Checkout
-        // ─────────────────────────────────────────────────────────
-        stage('Checkout') {
+        // ─────────────────────────────────────────
+        // Stage 1: Kiểm tra kết nối SSH tới VPS
+        // ─────────────────────────────────────────
+        stage('1. Verify VPS Connection') {
             steps {
-                echo '📥 Cloning source code...'
-                checkout scm
-            }
-        }
-
-        // ─────────────────────────────────────────────────────────
-        // STAGE 2: Test Backend (Spring Boot + H2 in-memory)
-        // ─────────────────────────────────────────────────────────
-        stage('Backend Test') {
-            steps {
-                echo '🧪 Running backend unit tests...'
-                dir('backend') {
-                    sh 'chmod +x gradlew'
-                    sh './gradlew test --no-daemon'
-                }
-            }
-            post {
-                always {
-                    junit allowEmptyResults: true,
-                          testResults: 'backend/build/test-results/test/*.xml'
-                }
-            }
-        }
-
-        // ─────────────────────────────────────────────────────────
-        // STAGE 3: Build Frontend (Vue 3 + Vite)
-        // ─────────────────────────────────────────────────────────
-        stage('Frontend Build') {
-            steps {
-                echo '⚡ Building Vue 3 frontend...'
-                dir('frontend') {
-                    sh 'npm ci'
-                    sh 'npm run build'
-                }
-            }
-        }
-
-        // ─────────────────────────────────────────────────────────
-        // STAGE 4: Build & Push Docker Images lên Docker Hub
-        // (chỉ chạy khi push lên nhánh main)
-        // ─────────────────────────────────────────────────────────
-        stage('Docker Build & Push') {
-            when { branch 'main' }
-            steps {
-                echo '🐳 Building and pushing Docker images...'
-
-                // Đăng nhập Docker Hub
-                sh 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
-
-                // Build & push Backend
-                sh """
-                    docker build -t ${IMAGE_BACKEND}:latest \
-                                 -t ${IMAGE_BACKEND}:${GIT_COMMIT} \
-                                 ./backend
-                    docker push ${IMAGE_BACKEND}:latest
-                    docker push ${IMAGE_BACKEND}:${GIT_COMMIT}
-                """
-
-                // Build & push Frontend
-                sh """
-                    docker build -t ${IMAGE_FRONTEND}:latest \
-                                 -t ${IMAGE_FRONTEND}:${GIT_COMMIT} \
-                                 ./frontend
-                    docker push ${IMAGE_FRONTEND}:latest
-                    docker push ${IMAGE_FRONTEND}:${GIT_COMMIT}
-                """
-
-                sh 'docker image prune -f'
-            }
-        }
-
-        // ─────────────────────────────────────────────────────────
-        // STAGE 5: Deploy trên VPS
-        // Jenkins đang chạy TRONG container trên VPS này,
-        // dùng SSH vào host machine để chạy docker compose.
-        // ─────────────────────────────────────────────────────────
-        stage('Deploy to VPS') {
-            when { branch 'main' }
-            steps {
-                echo '🚀 Deploying on VPS (thanhhung@192.168.139.128)...'
-
-                // Dùng sshagent plugin để quản lý SSH key an toàn
-                // Credential ID 'VPS_SSH_KEY' được cấu hình trong Jenkins
-                sshagent(credentials: ['VPS_SSH_KEY']) {
-
-                    // Copy docker-compose.yml lên VPS host
+                echo '=== Kiểm tra kết nối SSH tới VPS ==='
+                sshagent(credentials: [SSH_CRED_ID]) {
                     sh """
-                        scp -o StrictHostKeyChecking=no \
-                            docker-compose.yml \
-                            ${VPS_USER}@${VPS_HOST}:~/smartgrocery/
+                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} \\
+                            'echo "SSH OK – host: \$(hostname) – uptime: \$(uptime -p)"'
                     """
+                }
+            }
+        }
 
-                    // SSH vào host VPS và chạy docker compose
+        // ─────────────────────────────────────────
+        // Stage 2: Tạo thư mục & pull code mới nhất trên VPS
+        // ─────────────────────────────────────────
+        stage('2. Prepare & Pull Source on VPS') {
+            steps {
+                echo '=== Tạo thư mục repo và pull code mới nhất trên VPS ==='
+                sshagent(credentials: [SSH_CRED_ID]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no \
-                            ${VPS_USER}@${VPS_HOST} '
-                                set -e
-                                cd ~/smartgrocery
+                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
+                            set -e
+                            mkdir -p ${DEPLOY_DIR}
 
-                                export DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
+                            if [ ! -d "${DEPLOY_DIR}/.git" ]; then
+                                echo ">>> Repo chưa có – clone lần đầu..."
+                                git clone --branch ${GIT_BRANCH} ${GIT_REPO_URL} ${DEPLOY_DIR}
+                            else
+                                echo ">>> Repo đã có – pull bản mới nhất..."
+                                cd ${DEPLOY_DIR}
+                                git fetch --all
+                                git checkout ${GIT_BRANCH}
+                                git reset --hard origin/${GIT_BRANCH}
+                            fi
 
-                                echo "⬇️  Pulling latest images..."
-                                docker compose pull
+                            cd ${DEPLOY_DIR}
+                            echo "=== Commit hiện tại ==="
+                            git log --oneline -3
+                        '
+                    """
+                }
+            }
+        }
 
-                                echo "🔄 Restarting containers..."
-                                docker compose up -d --remove-orphans
+        // ─────────────────────────────────────────
+        // Stage 3: Build Docker Images trên VPS
+        // ─────────────────────────────────────────
+        stage('3. Build Docker Images on VPS') {
+            steps {
+                echo '=== Build Docker images trực tiếp trên VPS ==='
+                sshagent(credentials: [SSH_CRED_ID]) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
+                            set -e
+                            cd ${DEPLOY_DIR}
 
-                                echo "🧹 Cleaning old images..."
-                                docker image prune -f
+                            echo ">>> Build backend image..."
+                            docker build -t ${DOCKERHUB_USERNAME}/smartgrocery-backend:latest ./backend
 
-                                echo "✅ Deploy thành công!"
-                                docker compose ps
-                            '
+                            echo ">>> Build frontend image..."
+                            docker build -t ${DOCKERHUB_USERNAME}/smartgrocery-frontend:latest ./frontend
+
+                            echo "=== Images vừa build ==="
+                            docker images | grep smartgrocery
+                        '
+                    """
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────
+        // Stage 4: Deploy với Docker Compose
+        // ─────────────────────────────────────────
+        stage('4. Deploy with Docker Compose') {
+            steps {
+                echo '=== Deploy ứng dụng bằng docker-compose ==='
+                sshagent(credentials: [SSH_CRED_ID]) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
+                            set -e
+                            cd ${DEPLOY_DIR}
+
+                            # Tạo file .env nếu chưa tồn tại
+                            if [ ! -f .env ]; then
+                                echo ">>> Tạo .env mặc định..."
+                                printf "DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}\\nDB_USERNAME=postgres\\nDB_PASSWORD=123456\\n" > .env
+                            fi
+
+                            echo ">>> Dừng stack cũ..."
+                            docker compose -p ${COMPOSE_PROJECT} down --remove-orphans || true
+
+                            echo ">>> Khởi động stack mới..."
+                            docker compose -p ${COMPOSE_PROJECT} up -d
+
+                            echo "Deploy hoàn tất!"
+                        '
+                    """
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────
+        // Stage 5: Health Check
+        // ─────────────────────────────────────────
+        stage('5. Health Check') {
+            steps {
+                echo '=== Kiểm tra trạng thái các container sau deploy ==='
+                sshagent(credentials: [SSH_CRED_ID]) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
+                            echo "--- Trạng thái docker compose ---"
+                            docker compose -p ${COMPOSE_PROJECT} ps
+
+                            echo "--- Chờ 10 giây cho service khởi động ---"
+                            sleep 10
+
+                            echo "--- Kiểm tra frontend (port 80) ---"
+                            curl -sf http://localhost:80 > /dev/null \\
+                                && echo "Frontend OK" \\
+                                || echo "Frontend chua san sang"
+
+                            echo "--- Kiểm tra backend (port 8080) ---"
+                            curl -sf http://localhost:8080/actuator/health > /dev/null \\
+                                && echo "Backend OK" \\
+                                || echo "Backend chua san sang (co the can them thoi gian)"
+                        '
                     """
                 }
             }
         }
     }
 
-    // ── Thông báo sau khi pipeline kết thúc ──────────────────────
     post {
         success {
-            echo '✅ Pipeline hoàn tất thành công!'
+            echo "[SUCCESS] Pipeline hoan tat! Ung dung da duoc trien khai len VPS: ${VPS_HOST}"
         }
         failure {
-            echo '❌ Pipeline thất bại! Kiểm tra log bên trên.'
+            echo '[FAILED] Pipeline that bai! Kiem tra Console Output de xem chi tiet.'
         }
         always {
-            sh 'docker logout || true'
+            echo "=== Pipeline ket thuc: ${currentBuild.currentResult} – Build #${BUILD_NUMBER} ==="
         }
     }
 }

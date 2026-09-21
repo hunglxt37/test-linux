@@ -25,7 +25,7 @@ services:
   # Spring Boot Backend
   # ─────────────────────────────────────────────
   backend:
-    image: ${DOCKERHUB_USERNAME}/smartgrocery-backend:latest
+    image: smartgrocery/smartgrocery-backend:latest
     container_name: smartgrocery-backend
     restart: unless-stopped
     depends_on:
@@ -44,7 +44,7 @@ services:
   # Vue 3 Frontend (Nginx)
   # ─────────────────────────────────────────────
   frontend:
-    image: ${DOCKERHUB_USERNAME}/smartgrocery-frontend:latest
+    image: smartgrocery/smartgrocery-frontend:latest
     container_name: smartgrocery-frontend
     restart: unless-stopped
     depends_on:

@@ -18,8 +18,8 @@ pipeline {
         DEPLOY_DIR    = '/opt/smartgrocery'
 
         // ── Thông tin SSH vào VPS ──
-        // Tạo Credential loại "SSH Username with private key" trong Jenkins với ID = 'vps-ssh-key'
-        SSH_CRED_ID   = 'vps-ssh-key'
+        // Credential ID đã tạo sẵn trong Jenkins Global Credentials
+        SSH_CRED_ID   = 'sshkey'
         VPS_HOST      = '192.168.139.128'
         VPS_USER      = 'thanhhung'
 

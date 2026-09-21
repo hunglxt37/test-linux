@@ -15,7 +15,7 @@ pipeline {
         GIT_CRED_ID   = 'github-token'
 
         // ── Thư mục trên VPS nơi chứa source code ──
-        DEPLOY_DIR    = '/opt/smartgrocery'
+        DEPLOY_DIR    = '/home/thanhhung/smartgrocery'
 
         // ── Thông tin SSH vào VPS ──
         // Credential ID đã tạo sẵn trong Jenkins Global Credentials

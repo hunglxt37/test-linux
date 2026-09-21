@@ -1,0 +1,62 @@
+services:
+
+  # ─────────────────────────────────────────────
+  # PostgreSQL Database
+  # ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartgrocery-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: test-linux
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - smartgrocery-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  # Spring Boot Backend
+  # ─────────────────────────────────────────────
+  backend:
+    image: ${DOCKERHUB_USERNAME}/smartgrocery-backend:latest
+    container_name: smartgrocery-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/test-linux
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-123456}
+    networks:
+      - smartgrocery-net
+    expose:
+      - "8080"
+
+  # ─────────────────────────────────────────────
+  # Vue 3 Frontend (Nginx)
+  # ─────────────────────────────────────────────
+  frontend:
+    image: ${DOCKERHUB_USERNAME}/smartgrocery-frontend:latest
+    container_name: smartgrocery-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    networks:
+      - smartgrocery-net
+
+volumes:
+  postgres_data:
+
+networks:
+  smartgrocery-net:
+    driver: bridge

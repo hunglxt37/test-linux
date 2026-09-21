@@ -20,7 +20,6 @@ pipeline {
         // ── Thông tin SSH vào VPS ──
         // Tạo Credential loại "SSH Username with private key" trong Jenkins với ID = 'vps-ssh-key'
         SSH_CRED_ID   = 'vps-ssh-key'
-        // Điền IP hoặc domain VPS vào đây (hoặc đặt biến môi trường trong Jenkins)
         VPS_HOST      = '192.168.139.128'
         VPS_USER      = 'thanhhung'
 
@@ -45,9 +44,9 @@ pipeline {
         stage('1. Verify VPS Connection') {
             steps {
                 echo '=== Kiểm tra kết nối SSH tới VPS ==='
-                sshagent(credentials: [SSH_CRED_ID]) {
+                withCredentials([sshUserPrivateKey(credentialsId: SSH_CRED_ID, keyFileVariable: 'SSH_KEY')]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} \\
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} \
                             'echo "SSH OK – host: \$(hostname) – uptime: \$(uptime -p)"'
                     """
                 }
@@ -60,17 +59,17 @@ pipeline {
         stage('2. Prepare & Pull Source on VPS') {
             steps {
                 echo '=== Tạo thư mục repo và pull code mới nhất trên VPS ==='
-                sshagent(credentials: [SSH_CRED_ID]) {
+                withCredentials([sshUserPrivateKey(credentialsId: SSH_CRED_ID, keyFileVariable: 'SSH_KEY')]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
                             set -e
                             mkdir -p ${DEPLOY_DIR}
 
                             if [ ! -d "${DEPLOY_DIR}/.git" ]; then
-                                echo ">>> Repo chưa có – clone lần đầu..."
+                                echo ">>> Repo chua co – clone lan dau..."
                                 git clone --branch ${GIT_BRANCH} ${GIT_REPO_URL} ${DEPLOY_DIR}
                             else
-                                echo ">>> Repo đã có – pull bản mới nhất..."
+                                echo ">>> Repo da co – pull ban moi nhat..."
                                 cd ${DEPLOY_DIR}
                                 git fetch --all
                                 git checkout ${GIT_BRANCH}
@@ -78,7 +77,7 @@ pipeline {
                             fi
 
                             cd ${DEPLOY_DIR}
-                            echo "=== Commit hiện tại ==="
+                            echo "=== Commit hien tai ==="
                             git log --oneline -3
                         '
                     """
@@ -92,9 +91,9 @@ pipeline {
         stage('3. Build Docker Images on VPS') {
             steps {
                 echo '=== Build Docker images trực tiếp trên VPS ==='
-                sshagent(credentials: [SSH_CRED_ID]) {
+                withCredentials([sshUserPrivateKey(credentialsId: SSH_CRED_ID, keyFileVariable: 'SSH_KEY')]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
                             set -e
                             cd ${DEPLOY_DIR}
 
@@ -104,7 +103,7 @@ pipeline {
                             echo ">>> Build frontend image..."
                             docker build -t ${DOCKERHUB_USERNAME}/smartgrocery-frontend:latest ./frontend
 
-                            echo "=== Images vừa build ==="
+                            echo "=== Images vua build ==="
                             docker images | grep smartgrocery
                         '
                     """
@@ -118,25 +117,24 @@ pipeline {
         stage('4. Deploy with Docker Compose') {
             steps {
                 echo '=== Deploy ứng dụng bằng docker-compose ==='
-                sshagent(credentials: [SSH_CRED_ID]) {
+                withCredentials([sshUserPrivateKey(credentialsId: SSH_CRED_ID, keyFileVariable: 'SSH_KEY')]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
                             set -e
                             cd ${DEPLOY_DIR}
 
-                            # Tạo file .env nếu chưa tồn tại
                             if [ ! -f .env ]; then
-                                echo ">>> Tạo .env mặc định..."
+                                echo ">>> Tao .env mac dinh..."
                                 printf "DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}\\nDB_USERNAME=postgres\\nDB_PASSWORD=123456\\n" > .env
                             fi
 
-                            echo ">>> Dừng stack cũ..."
+                            echo ">>> Dung stack cu..."
                             docker compose -p ${COMPOSE_PROJECT} down --remove-orphans || true
 
-                            echo ">>> Khởi động stack mới..."
+                            echo ">>> Khoi dong stack moi..."
                             docker compose -p ${COMPOSE_PROJECT} up -d
 
-                            echo "Deploy hoàn tất!"
+                            echo "Deploy hoan tat!"
                         '
                     """
                 }
@@ -149,16 +147,16 @@ pipeline {
         stage('5. Health Check') {
             steps {
                 echo '=== Kiểm tra trạng thái các container sau deploy ==='
-                sshagent(credentials: [SSH_CRED_ID]) {
+                withCredentials([sshUserPrivateKey(credentialsId: SSH_CRED_ID, keyFileVariable: 'SSH_KEY')]) {
                     sh """
-                        ssh -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
-                            echo "--- Trạng thái docker compose ---"
+                        ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${VPS_USER}@${VPS_HOST} '
+                            echo "--- Trang thai docker compose ---"
                             docker compose -p ${COMPOSE_PROJECT} ps
 
-                            echo "--- Chờ 10 giây cho service khởi động ---"
+                            echo "--- Cho 10 giay cho service khoi dong ---"
                             sleep 10
 
-                            echo "--- Kiểm tra frontend (port 80) ---"
+                            echo "--- Kiem tra frontend (port 80) ---"
                             curl -sf http://localhost:80 > /dev/null \\
                                 && echo "Frontend OK" \\
                                 || echo "Frontend chua san sang"
